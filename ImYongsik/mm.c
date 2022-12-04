@@ -31,9 +31,9 @@ team_t team = {
     /* First member's email address */
     "Hamsik2rang",
     /* Second member's full name (leave blank if none) */
-    "",
+    "Kwon Jeongkeun",
     /* Second member's email address (leave blank if none) */
-    ""
+    "nuday1"
 };
 
 typedef uint32_t WORD;
@@ -46,6 +46,7 @@ typedef uint64_t DWORD;
 
 #define ALIGNMENT 8
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define ABS(a) (((a) < 0) ? ((-1) * (a)) : (a))
 
 #define PACK(size, alloc) ((size) | (alloc))
 #define GET(p) (*(WORD*)(p))
@@ -71,10 +72,14 @@ typedef uint64_t DWORD;
 static void* extend_heap(size_t words);
 static void* coalesce(void* bp);
 static void* find_fit(size_t size);
+static void* first_fit(size_t size);
+static void* next_fit(size_t size);
+static void* best_fit(size_t size);
+
 static void place(void* bp, size_t size);
 
 // static variables
-static char* heap_list_ptr = NULL;
+static const char* heap_list_ptr = NULL;
 
 /*
  * mm_init - initialize the malloc package.
@@ -144,32 +149,6 @@ void mm_free(void* ptr)
     PUT(FOOTER_PTR(ptr), PACK(size, 0));
     coalesce(ptr);
 }
-
-/*
- * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
- */
- // void* mm_realloc(void* ptr, size_t size)
- // {
- //     void* old_ptr = ptr;
- //     void* new_ptr;
- //     size_t copy_size;
-
- //     new_ptr = mm_malloc(size);
- //     if (new_ptr == NULL)
- //     {
- //         return NULL;
- //     }
-
- //     copy_size = *(size_t*)((char*)old_ptr - SIZE_T_SIZE);
- //     if (size < copy_size)
- //     {
- //         copy_size = size;
- //     }
-
- //     memcpy(new_ptr, old_ptr, copy_size);
- //     mm_free(old_ptr);
- //     return new_ptr;
- // }
 
 void* mm_realloc(void* ptr, size_t size)
 {
@@ -249,6 +228,13 @@ static void* coalesce(void* bp)
 
 static void* find_fit(size_t size)
 {
+    //return first_fit(size);
+    //return next_fit(size);
+    return best_fit(size);
+}
+
+static void* first_fit(size_t size)
+{
     char* cur = heap_list_ptr;
 
     while (GET_SIZE_FROM_HEADER(HEADER_PTR(cur)))
@@ -268,15 +254,62 @@ static void* find_fit(size_t size)
     return NULL;
 }
 
+static void* next_fit(size_t size)
+{
+    // WARNING: Not worked!!!
+    static char* cur = NULL;
+    if (NULL == cur || !GET_SIZE_FROM_HEADER(HEADER_PTR(cur)))
+    {
+        cur = heap_list_ptr;
+    }
+
+    while (GET_SIZE_FROM_HEADER(HEADER_PTR(cur)))
+    {
+        if (GET_ALLOC_FROM_HEADER(HEADER_PTR(cur)) ||
+            GET_SIZE_FROM_HEADER(HEADER_PTR(cur)) < size)
+        {
+            cur = NEXT_BLOCK_PTR(cur);
+            continue;
+        }
+
+        return cur;
+    }
+    return NULL;
+}
+
+static void* best_fit(size_t size)
+{
+    char* cur = heap_list_ptr;
+    void* fittest_block = NULL;
+
+    while (GET_SIZE_FROM_HEADER(HEADER_PTR(cur)))
+    {
+        if (GET_ALLOC_FROM_HEADER(HEADER_PTR(cur)) ||
+            GET_SIZE_FROM_HEADER(HEADER_PTR(cur)) < size)
+        {
+            cur = NEXT_BLOCK_PTR(cur);
+            continue;
+        }
+        if (!fittest_block || ABS(GET_SIZE_FROM_HEADER(HEADER_PTR(cur)) - size) < ABS(GET_SIZE_FROM_HEADER(HEADER_PTR(cur)) - size))
+        {
+            fittest_block = cur;
+        }
+        cur = NEXT_BLOCK_PTR(cur);
+    }
+
+    return fittest_block;
+}
+
 static void place(void* bp, size_t size)
 {
     size_t block_size = GET_SIZE_FROM_HEADER(HEADER_PTR(bp));
     if (block_size > size)
     {
-        // set header/footer for new allocated block
+        // set header/footer for allocated block
         PUT(HEADER_PTR(bp), PACK(size, 1));
         PUT(FOOTER_PTR(bp), PACK(size, 1));
 
+        // set header/footer for unallocated block
         bp = NEXT_BLOCK_PTR(bp);
         PUT(HEADER_PTR(bp), PACK(block_size - size, 0));
         PUT(FOOTER_PTR(bp), PACK(block_size - size, 0));
