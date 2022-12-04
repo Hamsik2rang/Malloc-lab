@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "fcntl.h": "c",
+        "stdlib.h": "c"
+    },
+    "C_Cpp.clang_format_fallbackStyle": "{BasedOnStyle: LLVM, IndentWidth: 4, TabWidth: 4, UseTab: Never, BreakBeforeBraces: Allman, AccessModifierOffset: -4, IndentCaseLabels: false, AllowShortFunctionsOnASingleLine: All, ColumnLimit: 0}"
+}
