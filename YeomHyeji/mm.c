@@ -45,7 +45,7 @@ team_t team = {
 #define CHUNKSIZE (1<<12) 
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))
-/* pack a size and allocation bit */
+/* packs a size and allocation bit */
 #define PACK(size, alloc) ((size)|(alloc))
 
 /* rounds up to the nearest multiple of ALIGNMENT */
@@ -53,53 +53,66 @@ team_t team = {
 
 #define GET(p) (*(unsigned int *)(p))
 #define PUT(p, val) (*(unsigned int *)(p) = (val))
+/* gets block size and allocation bit*/
 #define GET_SIZE(p) (GET(p) & ~0x7)
 #define GET_ALLOC(p) (GET(p) & 0x1)
 #define HDRP(bp) ((char *)(bp) - WSIZE)
 #define FTRP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
-
-#define FIRST_FIT
+/* allocation policy */
+// #define FIRST_FIT
+#define NEXT_FIT
+// #define BEST_FIT
 /*************************************************************************/
 
 /**********************global variable***************************/
 static char *heap_listp; // points to prologue block footer
+static char *last_bp; // ptr for next_fit
 /***************************************************************/
 
-/* Coalesce adjacent block under several conditions */
+/* 
+ * Coalesce adjacent block under several conditions 
+ */
 static void *coalesce(void *bp)
 {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
 
-    /* Case 1*/
+    /* Case 1 : prev, next block allocated */
     if (prev_alloc && next_alloc) return bp;
-    /* Case 2 */
+    /* Case 2 : just next block free */
     else if (prev_alloc && !next_alloc){
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
     }
-    /* Case 3 */
+    /* Case 3 : just prev block free */
     else if (!prev_alloc && next_alloc){
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
     }
-    /* Case 4 */
+    /* Case 4 : prev, next block free */
     else {
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
     }
+    #ifdef NEXT_FIT
+    /* last_bp isn't pointing to the free block just coalesced */
+    if ((last_bp > (char *)bp) && (last_bp < NEXT_BLKP(bp))) last_bp = bp;
+    #endif
+
     return bp;
 }
 
-/* Extend the heap */
+/* 
+ * Extend the heap and coalesce adjacent free blocks after
+ */
 static void *extend_heap(size_t size) // size bytes
 {
     char *bp;
@@ -129,33 +142,78 @@ int mm_init(void)
 
     heap_listp += (2*WSIZE); 
 
+    #ifdef NEXT_FIT
+    last_bp = (char *)heap_listp;
+    #endif
+
     if (extend_heap(CHUNKSIZE) == NULL) return -1;
 
     return 0;
 }
 
-/* Search the suitable free list in the heap */
+/* 
+ * Search a suitable free list in the heap 
+ */
 static void *find_fit(size_t asize)
 {
     /*** First Fit ***/
+    #ifdef FIRST_FIT
     void *bp;
 
-    for(bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
+    for(bp = (char *)heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
        if ((!GET_ALLOC(HDRP(bp))) && (asize <= GET_SIZE(HDRP(bp)))) return bp;
     }
     return NULL;
+    #endif
 
     /*** Next Fit ***/
+    #ifdef NEXT_FIT
+    char *bp = last_bp; 
+
+    /* search from last_bp to epilogue block */
+    for (; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
+        if ((!GET_ALLOC(HDRP(bp))) && (asize <= GET_SIZE(HDRP(bp)))) {
+            last_bp = bp;
+            return bp;
+        }
+    }
+
+    /* if there's no fit, search from the start to last bp*/
+    for(bp = (char *)heap_listp; bp < last_bp; bp = NEXT_BLKP(bp)){
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){
+            last_bp = bp;
+	        return bp;
+        }
+    }
+    return NULL;
+    #endif
 
     /*** Best Fit ***/
+    #ifdef BEST_FIT
+    void *bp;
+    void *bestp = NULL;
+    size_t bestsize = (20 * 1<<20);
+    
+    for(bp = (char *)heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
+        if (!GET_ALLOC(HDRP(bp)) && asize <= GET_SIZE(HDRP(bp))) {
+            if (GET_SIZE(HDRP(bp)) < bestsize){
+                bestp = bp;
+                bestsize = GET_SIZE(HDRP(bestp));
+            }
+        }
+    }
+    return bestp;
+    #endif
 }
 
-/* Allocate a new block */
+/* 
+ * Allocate a new block 
+ */
 static void place(void *bp, size_t asize)
 {
     size_t csize = GET_SIZE(HDRP(bp));
 
-    // if (previous block size - new size) is greater than 16 bytes, divide block
+    // if (previous block size - new size) is greater(or equal) than 16 bytes, divide block
     if ((csize - asize)>= 2*DSIZE) {
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
@@ -214,7 +272,7 @@ void mm_free(void *ptr)
 
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
- * returns a pointer to an allocated region
+ * returns a pointer to an newly allocated region
  */
 void *mm_realloc(void *ptr, size_t size) // size bytes
 {
@@ -242,16 +300,13 @@ void *mm_realloc(void *ptr, size_t size) // size bytes
     return newptr;
 }
 
+/****** explicit allocator *******/
+void *insert_block(void *bp, size_t size)
+{
+    bp = heap_listp;
+}
 
-
-
-
-
-
-
-
-
-
-
-
-
+void *remove_block(void *bp)
+{
+    bp = heap_listp;
+}
